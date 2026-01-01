@@ -1,68 +1,70 @@
-#!/bin/sh
-set -eu
+#!/bin/bash
+set -e
 
-file_env() {
-  var="$1"
-  file_var="${var}_FILE"
-  eval "val=\${$var-}"
-  eval "file_val=\${$file_var-}"
-  if [ -n "$val" ] && [ -n "$file_val" ]; then
-    echo "Both $var and $file_var are set. Please set only one." >&2
-    exit 1
-  fi
-  if [ -n "$file_val" ]; then
-    val="$(cat "$file_val")"
-  fi
-  if [ -z "$val" ]; then
-    echo "$var is not set" >&2
-    exit 1
-  fi
-  export "$var"="$val"
-}
+DB_PW_FILE="${MYSQL_PASSWORD_FILE:-}"
+CREDS_FILE="${WP_CREDENTIALS_FILE:-}"
 
-file_env MYSQL_PASSWORD
-file_env WP_ADMIN_PASSWORD
-file_env WP_USER_PASSWORD
-: "${DOMAIN_NAME:?DOMAIN_NAME is required}"
-: "${MYSQL_DATABASE:?MYSQL_DATABASE is required}"
-: "${MYSQL_USER:?MYSQL_USER is required}"
-: "${WP_TITLE:?WP_TITLE is required}"
-: "${WP_ADMIN_USER:?WP_ADMIN_USER is required}"
-: "${WP_ADMIN_EMAIL:?WP_ADMIN_EMAIL is required}"
-: "${WP_USER:?WP_USER is required}"
-: "${WP_USER_EMAIL:?WP_USER_EMAIL is required}"
-
-# Enforce admin username rule (must not contain admin/Admin/administrator/etc)
-echo "$WP_ADMIN_USER" | grep -i -E 'admin' && {
-  echo "ERROR: WP_ADMIN_USER must NOT contain 'admin' or 'administrator'"; exit 1;
-} || true
-
-# If WP isn't present in the volume yet, download + configure
-if [ ! -f wp-config.php ]; then
-  wp core download --allow-root
-
-  wp config create --allow-root \
-    --dbname="$MYSQL_DATABASE" \
-    --dbuser="$MYSQL_USER" \
-    --dbpass="$MYSQL_PASSWORD" \
-    --dbhost="mariadb:3306"
-
-  # Wait for DB
-  for i in $(seq 1 30); do
-    wp db check --allow-root && break
-    sleep 1
-  done
-
-  wp core install --allow-root \
-    --url="https://${DOMAIN_NAME}" \
-    --title="$WP_TITLE" \
-    --admin_user="$WP_ADMIN_USER" \
-    --admin_password="$WP_ADMIN_PASSWORD" \
-    --admin_email="$WP_ADMIN_EMAIL"
-
-  wp user create --allow-root \
-    "$WP_USER" "$WP_USER_EMAIL" \
-    --user_pass="$WP_USER_PASSWORD"
+if [ -z "$DB_PW_FILE" ] || [ ! -f "$DB_PW_FILE" ]; then
+  echo "Missing MYSQL_PASSWORD_FILE secret"
+  exit 1
 fi
+if [ -z "$CREDS_FILE" ] || [ ! -f "$CREDS_FILE" ]; then
+  echo "Missing WP_CREDENTIALS_FILE secret"
+  exit 1
+fi
+
+MYSQL_PASSWORD="$(cat "$DB_PW_FILE")"
+WP_ADMIN_PASSWORD="$(sed -n '1p' "$CREDS_FILE")"
+WP_USER_PASSWORD="$(sed -n '2p' "$CREDS_FILE")"
+WP_SITE_URL="https://${DOMAIN_NAME}"
+if [ -n "${HTTPS_PORT:-}" ] && [ "${HTTPS_PORT}" != "443" ]; then
+  WP_SITE_URL="${WP_SITE_URL}:${HTTPS_PORT}"
+fi
+
+# Download WP core if not present (volume is mounted here)
+if [ ! -f "wp-load.php" ]; then
+  echo "Downloading WordPress..."
+  wp core download --allow-root
+fi
+
+# Wait for DB
+echo "Waiting for MariaDB..."
+for i in $(seq 1 60); do
+  if mariadb-admin -h"${MYSQL_HOST}" -u"${MYSQL_USER}" -p"${MYSQL_PASSWORD}" ping >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+if [ ! -f "wp-config.php" ]; then
+  echo "Creating wp-config.php..."
+  wp config create \
+    --allow-root \
+    --dbname="${MYSQL_DATABASE}" \
+    --dbuser="${MYSQL_USER}" \
+    --dbpass="${MYSQL_PASSWORD}" \
+    --dbhost="${MYSQL_HOST}:3306"
+
+  echo "Installing WordPress..."
+  wp core install \
+    --allow-root \
+    --url="${WP_SITE_URL}" \
+    --title="${WP_TITLE}" \
+    --admin_user="${WP_ADMIN_USER}" \
+    --admin_password="${WP_ADMIN_PASSWORD}" \
+    --admin_email="${WP_ADMIN_EMAIL}"
+
+  echo "Creating regular user..."
+  wp user create \
+    --allow-root \
+    "${WP_USER}" "${WP_USER_EMAIL}" \
+    --user_pass="${WP_USER_PASSWORD}"
+fi
+
+echo "Ensuring site URL is ${WP_SITE_URL}..."
+wp option update home "${WP_SITE_URL}" --allow-root >/dev/null
+wp option update siteurl "${WP_SITE_URL}" --allow-root >/dev/null
+
+chown -R www-data:www-data /var/www/html
 
 exec "$@"

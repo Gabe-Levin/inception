@@ -1,18 +1,44 @@
-NAME=inception
-ENV_FILE=srcs/.env
+LOGIN ?= $(shell whoami)
+COMPOSE_FILE := srcs/docker-compose.yml
+ENV_FILE := srcs/.env
 
-$(ENV_FILE):
-	@echo "Missing $(ENV_FILE). Copy srcs/.env.example and fill secrets + paths." && exit 1
+DATA_DIR ?= /home/$(LOGIN)/data
+DOCKER_CONFIG ?= $(DATA_DIR)/.docker
 
-all: $(ENV_FILE)
-	docker compose -f srcs/docker-compose.yml --env-file $(ENV_FILE) up -d --build
+DOCKER_ENV = DOCKER_CONFIG=$(DOCKER_CONFIG) LOGIN=$(LOGIN) DATA_DIR=$(DATA_DIR)
+COMPOSE = $(DOCKER_ENV) docker compose -f $(COMPOSE_FILE) --env-file $(ENV_FILE)
+
+.PHONY: build up down restart logs clean clean_full dirs
+
+build: dirs
+	$(COMPOSE) build
+
+up: dirs
+	$(COMPOSE) up -d
 
 down:
-	docker compose -f srcs/docker-compose.yml --env-file $(ENV_FILE) down -v
+	$(COMPOSE) down
 
-clean: down
-	docker system prune -af
+re: down clean up
 
-re: clean all
+logs:
+	$(COMPOSE) logs -f
 
-.PHONY: all down clean re
+clean:
+	$(COMPOSE) down --volumes --rmi all
+	$(DOCKER_ENV) docker system prune -f
+
+nuke:
+	$(COMPOSE) down --volumes --rmi all
+	$(DOCKER_ENV) docker volume prune -f
+	$(DOCKER_ENV) docker network prune -f
+	$(DOCKER_ENV) docker image prune -af
+	$(DOCKER_ENV) docker container prune -f
+	$(DOCKER_ENV) docker system prune -af
+	rm -rf $(DATA_DIR)/mariadb $(DATA_DIR)/wordpress
+	mkdir -p $(DATA_DIR)/mariadb $(DATA_DIR)/wordpress
+
+dirs:
+	mkdir -p $(DOCKER_CONFIG)
+	mkdir -p $(DATA_DIR)/mariadb
+	mkdir -p $(DATA_DIR)/wordpress
