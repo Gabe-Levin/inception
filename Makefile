@@ -1,6 +1,8 @@
+ENV_FILE := srcs/.env
+# Prefer LOGIN from the env file so data paths stay stable across runs/users
+LOGIN ?= $(shell grep -E '^LOGIN=' $(ENV_FILE) | head -n1 | cut -d= -f2)
 LOGIN ?= $(shell whoami)
 COMPOSE_FILE := srcs/docker-compose.yml
-ENV_FILE := srcs/.env
 
 DATA_DIR ?= /home/$(LOGIN)/data
 DOCKER_CONFIG ?= $(DATA_DIR)/.docker
@@ -8,7 +10,7 @@ DOCKER_CONFIG ?= $(DATA_DIR)/.docker
 DOCKER_ENV = DOCKER_CONFIG=$(DOCKER_CONFIG) LOGIN=$(LOGIN) DATA_DIR=$(DATA_DIR)
 COMPOSE = $(DOCKER_ENV) docker compose -f $(COMPOSE_FILE) --env-file $(ENV_FILE)
 
-.PHONY: build up down restart logs clean clean_full dirs
+.PHONY: build up down restart logs ps clean clean_full dirs
 
 build: dirs
 	$(COMPOSE) build
@@ -23,6 +25,9 @@ re: down clean up
 
 logs:
 	$(COMPOSE) logs -f
+
+ps:
+	$(COMPOSE) ps
 
 clean:
 	$(COMPOSE) down --volumes --rmi all
