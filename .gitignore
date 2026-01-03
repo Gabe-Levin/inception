@@ -1,0 +1,4 @@
+secrets/
+srcs/.env
+srcs/.env.*
+!srcs/.env.example
