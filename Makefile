@@ -1,19 +1,9 @@
-ENV_FILE := srcs/.env
-# Prefer LOGIN from the env file so data paths stay stable across runs/users
-LOGIN ?= $(shell grep -E '^LOGIN=' $(ENV_FILE) | head -n1 | cut -d= -f2)
-LOGIN ?= $(shell whoami)
-COMPOSE_FILE := srcs/docker-compose.yml
+COMPOSE := docker compose -f srcs/docker-compose.yml --env-file srcs/.env
 
-DATA_DIR ?= /home/$(LOGIN)/data
-DOCKER_CONFIG ?= $(DATA_DIR)/.docker
+.PHONY: build up down restart logs clean clean_full dirs
 
-DOCKER_ENV = DOCKER_CONFIG=$(DOCKER_CONFIG) LOGIN=$(LOGIN) DATA_DIR=$(DATA_DIR)
-COMPOSE = $(DOCKER_ENV) docker compose -f $(COMPOSE_FILE) --env-file $(ENV_FILE)
-
-.PHONY: build up down restart logs ps clean clean_full dirs
-
-build: dirs
-	$(COMPOSE) build
+build:
+	$(COMPOSE) build --no-cache
 
 up: dirs
 	$(COMPOSE) up -d
@@ -21,29 +11,20 @@ up: dirs
 down:
 	$(COMPOSE) down
 
-re: down clean up
+re: down up
 
 logs:
 	$(COMPOSE) logs -f
 
-ps:
-	$(COMPOSE) ps
-
 clean:
 	$(COMPOSE) down --volumes --rmi all
-	$(DOCKER_ENV) docker system prune -f
+	docker system prune -f
 
-nuke:
-	$(COMPOSE) down --volumes --rmi all
-	$(DOCKER_ENV) docker volume prune -f
-	$(DOCKER_ENV) docker network prune -f
-	$(DOCKER_ENV) docker image prune -af
-	$(DOCKER_ENV) docker container prune -f
-	$(DOCKER_ENV) docker system prune -af
-	rm -rf $(DATA_DIR)/mariadb $(DATA_DIR)/wordpress
-	mkdir -p $(DATA_DIR)/mariadb $(DATA_DIR)/wordpress
-
-dirs:
-	mkdir -p $(DOCKER_CONFIG)
-	mkdir -p $(DATA_DIR)/mariadb
-	mkdir -p $(DATA_DIR)/wordpress
+nuke: clean
+	docker volume prune -f
+	docker network prune -f
+	docker image prune -af
+	docker container prune -f
+	docker system prune -af
+	rm -rf /home/$(USER)/data/mariadb /home/$(USER)/data/wordpress
+	mkdir -p /home/$(USER)/data/mariadb /home/$(USER)/data/wordpress
